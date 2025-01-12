@@ -1,17 +1,18 @@
-from toolbox import get_conf, get_pictures_list, encode_image
 import base64
 import datetime
 import hashlib
 import hmac
 import json
-from urllib.parse import urlparse
 import ssl
+import websocket
+import threading
+from toolbox import get_conf, get_pictures_list, encode_image
+from loguru import logger
+from urllib.parse import urlparse
 from datetime import datetime
 from time import mktime
 from urllib.parse import urlencode
 from wsgiref.handlers import format_date_time
-import websocket
-import threading, time
 
 timeout_bot_msg = '[Local Message] Request timeout. Network error.'
 
@@ -65,19 +66,21 @@ class SparkRequestInstance():
         self.gpt_url = "ws://spark-api.xf-yun.com/v1.1/chat"
         self.gpt_url_v2 = "ws://spark-api.xf-yun.com/v2.1/chat"
         self.gpt_url_v3 = "ws://spark-api.xf-yun.com/v3.1/chat"
+        self.gpt_url_v35 = "wss://spark-api.xf-yun.com/v3.5/chat"
         self.gpt_url_img = "wss://spark-api.cn-huabei-1.xf-yun.com/v2.1/image"
+        self.gpt_url_v4 = "wss://spark-api.xf-yun.com/v4.0/chat"
 
         self.time_to_yield_event = threading.Event()
         self.time_to_exit_event = threading.Event()
 
         self.result_buf = ""
 
-    def generate(self, inputs, llm_kwargs, history, system_prompt):
+    def generate(self, inputs, llm_kwargs, history, system_prompt, use_image_api=False):
         llm_kwargs = llm_kwargs
         history = history
         system_prompt = system_prompt
         import _thread as thread
-        thread.start_new_thread(self.create_blocking_request, (inputs, llm_kwargs, history, system_prompt))
+        thread.start_new_thread(self.create_blocking_request, (inputs, llm_kwargs, history, system_prompt, use_image_api))
         while True:
             self.time_to_yield_event.wait(timeout=1)
             if self.time_to_yield_event.is_set():
@@ -86,18 +89,24 @@ class SparkRequestInstance():
                 return self.result_buf
 
 
-    def create_blocking_request(self, inputs, llm_kwargs, history, system_prompt):
+    def create_blocking_request(self, inputs, llm_kwargs, history, system_prompt, use_image_api):
         if llm_kwargs['llm_model'] == 'sparkv2':
             gpt_url = self.gpt_url_v2
         elif llm_kwargs['llm_model'] == 'sparkv3':
             gpt_url = self.gpt_url_v3
+        elif llm_kwargs['llm_model'] == 'sparkv3.5':
+            gpt_url = self.gpt_url_v35
+        elif llm_kwargs['llm_model'] == 'sparkv4':
+            gpt_url = self.gpt_url_v4
         else:
             gpt_url = self.gpt_url
         file_manifest = []
-        if llm_kwargs.get('most_recent_uploaded'):
+        if use_image_api and llm_kwargs.get('most_recent_uploaded'):
             if llm_kwargs['most_recent_uploaded'].get('path'):
                 file_manifest = get_pictures_list(llm_kwargs['most_recent_uploaded']['path'])
-                gpt_url = self.gpt_url_img
+                if len(file_manifest) > 0:
+                    logger.info('正在使用讯飞图片理解API')
+                    gpt_url = self.gpt_url_img
         wsParam = Ws_Param(self.appid, self.api_key, self.api_secret, gpt_url)
         websocket.enableTrace(False)
         wsUrl = wsParam.create_url()
@@ -115,7 +124,7 @@ class SparkRequestInstance():
             data = json.loads(message)
             code = data['header']['code']
             if code != 0:
-                print(f'请求错误: {code}, {data}')
+                logger.error(f'请求错误: {code}, {data}')
                 self.result_buf += str(data)
                 ws.close()
                 self.time_to_exit_event.set()
@@ -132,7 +141,7 @@ class SparkRequestInstance():
 
         # 收到websocket错误的处理
         def on_error(ws, error):
-            print("error:", error)
+            logger.error("error:", error)
             self.time_to_exit_event.set()
 
         # 收到websocket关闭的处理
@@ -188,6 +197,8 @@ def gen_params(appid, inputs, llm_kwargs, history, system_prompt, file_manifest)
         "spark": "general",
         "sparkv2": "generalv2",
         "sparkv3": "generalv3",
+        "sparkv3.5": "generalv3.5",
+        "sparkv4": "4.0Ultra"
     }
     domains_select = domains[llm_kwargs['llm_model']]
     if file_manifest: domains_select = 'image'

@@ -1,13 +1,12 @@
+from loguru import logger
 from toolbox import update_ui
 from toolbox import CatchException, report_exception
-from .crazy_utils import read_and_clean_pdf_text
-from .crazy_utils import request_gpt_model_in_new_thread_with_ui_alive
-fast_debug = False
+from crazy_functions.crazy_utils import read_and_clean_pdf_text
+from crazy_functions.crazy_utils import request_gpt_model_in_new_thread_with_ui_alive
 
 
 def 解析PDF(file_name, llm_kwargs, plugin_kwargs, chatbot, history, system_prompt):
-    import tiktoken
-    print('begin analysis on:', file_name)
+    logger.info('begin analysis on:', file_name)
 
     ############################## <第 0 步，切割PDF> ##################################
     # 递归地切割PDF文件，每一块（尽量是完整的一个section，比如introduction，experiment等，必要时再进行切割）
@@ -15,20 +14,15 @@ def 解析PDF(file_name, llm_kwargs, plugin_kwargs, chatbot, history, system_pro
     file_content, page_one = read_and_clean_pdf_text(file_name) # （尝试）按照章节切割PDF
     file_content = file_content.encode('utf-8', 'ignore').decode()   # avoid reading non-utf8 chars
     page_one = str(page_one).encode('utf-8', 'ignore').decode()  # avoid reading non-utf8 chars
-    
+
     TOKEN_LIMIT_PER_FRAGMENT = 2500
 
-    from .crazy_utils import breakdown_txt_to_satisfy_token_limit_for_pdf
-    from request_llms.bridge_all import model_info
-    enc = model_info["gpt-3.5-turbo"]['tokenizer']
-    def get_token_num(txt): return len(enc.encode(txt, disallowed_special=()))
-    paper_fragments = breakdown_txt_to_satisfy_token_limit_for_pdf(
-        txt=file_content,  get_token_fn=get_token_num, limit=TOKEN_LIMIT_PER_FRAGMENT)
-    page_one_fragments = breakdown_txt_to_satisfy_token_limit_for_pdf(
-        txt=str(page_one), get_token_fn=get_token_num, limit=TOKEN_LIMIT_PER_FRAGMENT//4)
+    from crazy_functions.pdf_fns.breakdown_txt import breakdown_text_to_satisfy_token_limit
+    paper_fragments = breakdown_text_to_satisfy_token_limit(txt=file_content, limit=TOKEN_LIMIT_PER_FRAGMENT, llm_model=llm_kwargs['llm_model'])
+    page_one_fragments = breakdown_text_to_satisfy_token_limit(txt=str(page_one), limit=TOKEN_LIMIT_PER_FRAGMENT//4, llm_model=llm_kwargs['llm_model'])
     # 为了更好的效果，我们剥离Introduction之后的部分（如果有）
     paper_meta = page_one_fragments[0].split('introduction')[0].split('Introduction')[0].split('INTRODUCTION')[0]
-    
+
     ############################## <第 1 步，从摘要中提取高价值信息，放到history中> ##################################
     final_results = []
     final_results.append(paper_meta)
@@ -41,16 +35,16 @@ def 解析PDF(file_name, llm_kwargs, plugin_kwargs, chatbot, history, system_pro
     last_iteration_result = paper_meta  # 初始值是摘要
     MAX_WORD_TOTAL = 4096
     n_fragment = len(paper_fragments)
-    if n_fragment >= 20: print('文章极长，不能达到预期效果')
+    if n_fragment >= 20: logger.warning('文章极长，不能达到预期效果')
     for i in range(n_fragment):
         NUM_OF_WORD = MAX_WORD_TOTAL // n_fragment
         i_say = f"Read this section, recapitulate the content of this section with less than {NUM_OF_WORD} words: {paper_fragments[i]}"
-        i_say_show_user = f"[{i+1}/{n_fragment}] Read this section, recapitulate the content of this section with less than {NUM_OF_WORD} words: {paper_fragments[i][:200]}"
+        i_say_show_user = f"[{i+1}/{n_fragment}] Read this section, recapitulate the content of this section with less than {NUM_OF_WORD} words: {paper_fragments[i][:200]} ...."
         gpt_say = yield from request_gpt_model_in_new_thread_with_ui_alive(i_say, i_say_show_user,  # i_say=真正给chatgpt的提问， i_say_show_user=给用户看的提问
-                                                                           llm_kwargs, chatbot, 
+                                                                           llm_kwargs, chatbot,
                                                                            history=["The main idea of the previous section is?", last_iteration_result], # 迭代上一次的结果
                                                                            sys_prompt="Extract the main idea of this section, answer me with Chinese."  # 提示
-                                                                        ) 
+                                                                        )
         iteration_results.append(gpt_say)
         last_iteration_result = gpt_say
 
@@ -62,13 +56,13 @@ def 解析PDF(file_name, llm_kwargs, plugin_kwargs, chatbot, history, system_pro
     chatbot.append([i_say_show_user, gpt_say])
 
     ############################## <第 4 步，设置一个token上限，防止回答时Token溢出> ##################################
-    from .crazy_utils import input_clipping
+    from crazy_functions.crazy_utils import input_clipping
     _, final_results = input_clipping("", final_results, max_token_limit=3200)
     yield from update_ui(chatbot=chatbot, history=final_results) # 注意这里的历史记录被替代了
 
 
 @CatchException
-def 理解PDF文档内容标准文件输入(txt, llm_kwargs, plugin_kwargs, chatbot, history, system_prompt, web_port):
+def 理解PDF文档内容标准文件输入(txt, llm_kwargs, plugin_kwargs, chatbot, history, system_prompt, user_request):
     import glob, os
 
     # 基本信息：功能、贡献者
@@ -81,8 +75,8 @@ def 理解PDF文档内容标准文件输入(txt, llm_kwargs, plugin_kwargs, chat
     try:
         import fitz
     except:
-        report_exception(chatbot, history, 
-            a = f"解析项目: {txt}", 
+        report_exception(chatbot, history,
+            a = f"解析项目: {txt}",
             b = f"导入软件依赖失败。使用该模块需要额外依赖，安装方法```pip install --upgrade pymupdf```。")
         yield from update_ui(chatbot=chatbot, history=history) # 刷新界面
         return

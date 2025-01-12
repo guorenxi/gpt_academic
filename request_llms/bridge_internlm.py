@@ -65,10 +65,10 @@ class GetInternlmHandle(LocalLLMHandle):
 
     def llm_stream_generator(self, **kwargs):
         import torch
-        import logging
         import copy
         import warnings
         import torch.nn as nn
+        from loguru import logger as logging 
         from transformers.generation.utils import LogitsProcessorList, StoppingCriteriaList, GenerationConfig
 
         # 🏃‍♂️🏃‍♂️🏃‍♂️ 子进程执行
@@ -82,7 +82,7 @@ class GetInternlmHandle(LocalLLMHandle):
             history = kwargs['history']
             real_prompt = combine_history(prompt, history)
             return model, tokenizer, real_prompt, max_length, top_p, temperature
-        
+
         model, tokenizer, prompt, max_length, top_p, temperature = adaptor()
         prefix_allowed_tokens_fn = None
         logits_processor = None
@@ -119,7 +119,7 @@ class GetInternlmHandle(LocalLLMHandle):
         elif generation_config.max_new_tokens is not None:
             generation_config.max_length = generation_config.max_new_tokens + input_ids_seq_length
             if not has_default_max_length:
-                logging.warn(
+                logging.warning(
                     f"Both `max_new_tokens` (={generation_config.max_new_tokens}) and `max_length`(="
                     f"{generation_config.max_length}) seem to have been set. `max_new_tokens` will take precedence. "
                     "Please refer to the documentation for more information. "
@@ -183,7 +183,7 @@ class GetInternlmHandle(LocalLLMHandle):
                 outputs, model_kwargs, is_encoder_decoder=False
             )
             unfinished_sequences = unfinished_sequences.mul((min(next_tokens != i for i in eos_token_id)).long())
-            
+
             output_token_ids = input_ids[0].cpu().tolist()
             output_token_ids = output_token_ids[input_length:]
             for each_eos_token_id in eos_token_id:
@@ -196,7 +196,7 @@ class GetInternlmHandle(LocalLLMHandle):
             if unfinished_sequences.max() == 0 or stopping_criteria(input_ids, scores):
                 return
 
-    
+
 # ------------------------------------------------------------------------------------------------------------------------
 # 🔌💻 GPT-Academic Interface
 # ------------------------------------------------------------------------------------------------------------------------

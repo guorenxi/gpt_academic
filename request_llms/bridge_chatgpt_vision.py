@@ -8,15 +8,15 @@
     2. predict_no_ui_long_connection：支持多线程
 """
 
+import os
 import json
 import time
-import logging
 import requests
 import base64
-import os
 import glob
+from loguru import logger
 from toolbox import get_conf, update_ui, is_any_api_key, select_api_key, what_keys, clip_history, trimmed_format_exc, is_the_upload_folder, \
-    update_ui_lastest_msg, get_max_token, encode_image, have_any_recent_upload_image_files
+    update_ui_lastest_msg, get_max_token, encode_image, have_any_recent_upload_image_files, log_chat
 
 
 proxies, TIMEOUT_SECONDS, MAX_RETRY, API_ORG, AZURE_CFG_ARRAY = \
@@ -27,10 +27,8 @@ timeout_bot_msg = '[Local Message] Request timeout. Network error. Please check 
 
 
 def report_invalid_key(key):
-    if get_conf("BLOCK_INVALID_APIKEY"): 
-        # 实验性功能，自动检测并屏蔽失效的KEY，请勿使用
-        from request_llms.key_manager import ApiKeyManager
-        api_key = ApiKeyManager().add_key_to_blacklist(key)
+    # 弃用功能
+    return
 
 def get_full_error(chunk, stream_response):
     """
@@ -51,13 +49,13 @@ def decode_chunk(chunk):
     choice_valid = False
     has_content = False
     has_role = False
-    try: 
+    try:
         chunkjson = json.loads(chunk_decoded[6:])
         has_choices = 'choices' in chunkjson
         if has_choices: choice_valid = (len(chunkjson['choices']) > 0)
         if has_choices and choice_valid: has_content = "content" in chunkjson['choices'][0]["delta"]
         if has_choices and choice_valid: has_role = "role" in chunkjson['choices'][0]["delta"]
-    except: 
+    except:
         pass
     return chunk_decoded, chunkjson, has_choices, choice_valid, has_content, has_role
 
@@ -102,8 +100,7 @@ def predict(inputs, llm_kwargs, plugin_kwargs, chatbot, history=[], system_promp
         inputs, history = handle_core_functionality(additional_fn, inputs, history, chatbot)
 
     raw_input = inputs
-    logging.info(f'[raw_input] {raw_input}')
-    def make_media_input(inputs, image_paths): 
+    def make_media_input(inputs, image_paths):
         for image_path in image_paths:
             inputs = inputs + f'<br/><br/><div align="center"><img src="file={os.path.abspath(image_path)}"></div>'
         return inputs
@@ -122,7 +119,7 @@ def predict(inputs, llm_kwargs, plugin_kwargs, chatbot, history=[], system_promp
         chatbot[-1] = (inputs, f"您提供的api-key不满足要求，不包含任何可用于{llm_kwargs['llm_model']}的api-key。您可能选择了错误的模型或请求源。")
         yield from update_ui(chatbot=chatbot, history=history, msg="api-key不满足要求") # 刷新界面
         return
-        
+
     # 检查endpoint是否合法
     try:
         from .bridge_all import model_info
@@ -150,7 +147,7 @@ def predict(inputs, llm_kwargs, plugin_kwargs, chatbot, history=[], system_promp
             if retry > MAX_RETRY: raise TimeoutError
 
     gpt_replying_buffer = ""
-    
+
     is_head_of_the_stream = True
     if stream:
         stream_response =  response.iter_lines()
@@ -162,21 +159,21 @@ def predict(inputs, llm_kwargs, plugin_kwargs, chatbot, history=[], system_promp
                 chunk_decoded = chunk.decode()
                 error_msg = chunk_decoded
                 # 首先排除一个one-api没有done数据包的第三方Bug情形
-                if len(gpt_replying_buffer.strip()) > 0 and len(error_msg) == 0: 
+                if len(gpt_replying_buffer.strip()) > 0 and len(error_msg) == 0:
                     yield from update_ui(chatbot=chatbot, history=history, msg="检测到有缺陷的非OpenAI官方接口，建议选择更稳定的接口。")
                     break
                 # 其他情况，直接返回报错
                 chatbot, history = handle_error(inputs, llm_kwargs, chatbot, history, chunk_decoded, error_msg, api_key)
                 yield from update_ui(chatbot=chatbot, history=history, msg="非OpenAI官方接口返回了错误:" + chunk.decode()) # 刷新界面
                 return
-            
+
             # 提前读取一些信息 （用于判断异常）
             chunk_decoded, chunkjson, has_choices, choice_valid, has_content, has_role = decode_chunk(chunk)
 
             if is_head_of_the_stream and (r'"object":"error"' not in chunk_decoded) and (r"content" not in chunk_decoded):
                 # 数据流的第一帧不携带content
                 is_head_of_the_stream = False; continue
-            
+
             if chunk:
                 try:
                     if has_choices and not choice_valid:
@@ -187,7 +184,7 @@ def predict(inputs, llm_kwargs, plugin_kwargs, chatbot, history=[], system_promp
                         # 判定为数据流的结束，gpt_replying_buffer也写完了
                         lastmsg = chatbot[-1][-1] + f"\n\n\n\n「{llm_kwargs['llm_model']}调用结束，该模型不具备上下文对话能力，如需追问，请及时切换模型。」"
                         yield from update_ui_lastest_msg(lastmsg, chatbot, history, delay=1)
-                        logging.info(f'[response] {gpt_replying_buffer}')
+                        log_chat(llm_model=llm_kwargs["llm_model"], input_str=inputs, output_str=gpt_replying_buffer)
                         break
                     # 处理数据流的主体
                     status_text = f"finish_reason: {chunkjson['choices'][0].get('finish_reason', 'null')}"
@@ -212,7 +209,7 @@ def predict(inputs, llm_kwargs, plugin_kwargs, chatbot, history=[], system_promp
                     error_msg = chunk_decoded
                     chatbot, history = handle_error(inputs, llm_kwargs, chatbot, history, chunk_decoded, error_msg, api_key)
                     yield from update_ui(chatbot=chatbot, history=history, msg="Json异常" + error_msg) # 刷新界面
-                    print(error_msg)
+                    logger.error(error_msg)
                     return
 
 def handle_error(inputs, llm_kwargs, chatbot, history, chunk_decoded, error_msg, api_key=""):
@@ -220,7 +217,7 @@ def handle_error(inputs, llm_kwargs, chatbot, history, chunk_decoded, error_msg,
     openai_website = ' 请登录OpenAI查看详情 https://platform.openai.com/signup'
     if "reduce the length" in error_msg:
         if len(history) >= 2: history[-1] = ""; history[-2] = "" # 清除当前溢出的输入：history[-2] 是本次输入, history[-1] 是本次输出
-        history = clip_history(inputs=inputs, history=history, tokenizer=model_info[llm_kwargs['llm_model']]['tokenizer'], 
+        history = clip_history(inputs=inputs, history=history, tokenizer=model_info[llm_kwargs['llm_model']]['tokenizer'],
                                                max_token_limit=(model_info[llm_kwargs['llm_model']]['max_token'])) # history至少释放二分之一
         chatbot[-1] = (chatbot[-1][0], "[Local Message] Reduce the length. 本次输入过长, 或历史数据过长. 历史缓存数据已部分释放, 您可以请再次尝试. (若再次失败则更可能是因为输入过长.)")
     elif "does not exist" in error_msg:
@@ -260,7 +257,7 @@ def generate_payload(inputs, llm_kwargs, history, system_prompt, image_paths):
         "Authorization": f"Bearer {api_key}"
     }
     if API_ORG.startswith('org-'): headers.update({"OpenAI-Organization": API_ORG})
-    if llm_kwargs['llm_model'].startswith('azure-'): 
+    if llm_kwargs['llm_model'].startswith('azure-'):
         headers.update({"api-key": api_key})
         if llm_kwargs['llm_model'] in AZURE_CFG_ARRAY.keys():
             azure_api_key_unshared = AZURE_CFG_ARRAY[llm_kwargs['llm_model']]["AZURE_API_KEY"]
@@ -294,7 +291,7 @@ def generate_payload(inputs, llm_kwargs, history, system_prompt, image_paths):
 
     payload = {
         "model": model,
-        "messages": messages, 
+        "messages": messages,
         "temperature": llm_kwargs['temperature'],   # 1.0,
         "top_p": llm_kwargs['top_p'],               # 1.0,
         "n": 1,
@@ -303,10 +300,7 @@ def generate_payload(inputs, llm_kwargs, history, system_prompt, image_paths):
         "presence_penalty": 0,
         "frequency_penalty": 0,
     }
-    try:
-        print(f" {llm_kwargs['llm_model']} : {inputs[:100]} ..........")
-    except:
-        print('输入中可能存在乱码。')
+
     return headers, payload, api_key
 
 

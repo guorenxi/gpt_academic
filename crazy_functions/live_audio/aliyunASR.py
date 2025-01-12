@@ -1,5 +1,6 @@
-import time, logging, json, sys, struct
+import time, json, sys, struct
 import numpy as np
+from loguru import logger as logging
 from scipy.io.wavfile import WAVE_FORMAT
 
 def write_numpy_to_wave(filename, rate, data, add_header=False):
@@ -85,8 +86,8 @@ def write_numpy_to_wave(filename, rate, data, add_header=False):
 
 def is_speaker_speaking(vad, data, sample_rate):
     # Function to detect if the speaker is speaking
-    # The WebRTC VAD only accepts 16-bit mono PCM audio, 
-    # sampled at 8000, 16000, 32000 or 48000 Hz. 
+    # The WebRTC VAD only accepts 16-bit mono PCM audio,
+    # sampled at 8000, 16000, 32000 or 48000 Hz.
     # A frame must be either 10, 20, or 30 ms in duration:
     frame_duration = 30
     n_bit_each = int(sample_rate * frame_duration / 1000)*2 # x2 because audio is 16 bit (2 bytes)
@@ -94,7 +95,7 @@ def is_speaker_speaking(vad, data, sample_rate):
     for t in range(len(data)):
         if t!=0 and t % n_bit_each == 0:
             res_list.append(vad.is_speech(data[t-n_bit_each:t], sample_rate))
-    
+
     info = ''.join(['^' if r else '.' for r in res_list])
     info = info[:10]
     if any(res_list):
@@ -106,18 +107,14 @@ def is_speaker_speaking(vad, data, sample_rate):
 class AliyunASR():
 
     def test_on_sentence_begin(self, message, *args):
-        # print("test_on_sentence_begin:{}".format(message))
         pass
 
     def test_on_sentence_end(self, message, *args):
-        # print("test_on_sentence_end:{}".format(message))
         message = json.loads(message)
         self.parsed_sentence = message['payload']['result']
         self.event_on_entence_end.set()
-        # print(self.parsed_sentence)
 
     def test_on_start(self, message, *args):
-        # print("test_on_start:{}".format(message))
         pass
 
     def test_on_error(self, message, *args):
@@ -129,13 +126,11 @@ class AliyunASR():
         pass
 
     def test_on_result_chg(self, message, *args):
-        # print("test_on_chg:{}".format(message))
         message = json.loads(message)
         self.parsed_text = message['payload']['result']
         self.event_on_result_chg.set()
 
     def test_on_completed(self, message, *args):
-        # print("on_completed:args=>{} message=>{}".format(args, message))
         pass
 
     def audio_convertion_thread(self, uuid):
@@ -186,10 +181,10 @@ class AliyunASR():
         keep_alive_last_send_time = time.time()
         while not self.stop:
             # time.sleep(self.capture_interval)
-            audio = rad.read(uuid.hex) 
+            audio = rad.read(uuid.hex)
             if audio is not None:
                 # convert to pcm file
-                temp_file = f'{temp_folder}/{uuid.hex}.pcm' # 
+                temp_file = f'{temp_folder}/{uuid.hex}.pcm' #
                 dsdata = change_sample_rate(audio, rad.rate, NEW_SAMPLERATE) # 48000 --> 16000
                 write_numpy_to_wave(temp_file, NEW_SAMPLERATE, dsdata)
                 # read pcm binary
@@ -248,14 +243,14 @@ class AliyunASR():
 
         try:
             response = client.do_action_with_exception(request)
-            print(response)
+            logging.info(response)
             jss = json.loads(response)
             if 'Token' in jss and 'Id' in jss['Token']:
                 token = jss['Token']['Id']
                 expireTime = jss['Token']['ExpireTime']
-                print("token = " + token)
-                print("expireTime = " + str(expireTime))
+                logging.info("token = " + token)
+                logging.info("expireTime = " + str(expireTime))
         except Exception as e:
-            print(e)
+            logging.error(e)
 
         return token

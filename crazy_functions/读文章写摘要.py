@@ -1,19 +1,18 @@
 from toolbox import update_ui
 from toolbox import CatchException, report_exception
 from toolbox import write_history_to_file, promote_file_to_downloadzone
-from .crazy_utils import request_gpt_model_in_new_thread_with_ui_alive
+from crazy_functions.crazy_utils import request_gpt_model_in_new_thread_with_ui_alive
 
 
 def 解析Paper(file_manifest, project_folder, llm_kwargs, plugin_kwargs, chatbot, history, system_prompt):
     import time, glob, os
-    print('begin analysis on:', file_manifest)
     for index, fp in enumerate(file_manifest):
         with open(fp, 'r', encoding='utf-8', errors='replace') as f:
             file_content = f.read()
 
         prefix = "接下来请你逐文件分析下面的论文文件，概括其内容" if index==0 else ""
         i_say = prefix + f'请对下面的文章片段用中文做一个概述，文件名是{os.path.relpath(fp, project_folder)}，文章内容是 ```{file_content}```'
-        i_say_show_user = prefix + f'[{index}/{len(file_manifest)}] 请对下面的文章片段做一个概述: {os.path.abspath(fp)}'
+        i_say_show_user = prefix + f'[{index+1}/{len(file_manifest)}] 请对下面的文章片段做一个概述: {os.path.abspath(fp)}'
         chatbot.append((i_say_show_user, "[Local Message] waiting gpt response."))
         yield from update_ui(chatbot=chatbot, history=history) # 刷新界面
 
@@ -44,7 +43,7 @@ def 解析Paper(file_manifest, project_folder, llm_kwargs, plugin_kwargs, chatbo
 
 
 @CatchException
-def 读文章写摘要(txt, llm_kwargs, plugin_kwargs, chatbot, history, system_prompt, web_port):
+def 读文章写摘要(txt, llm_kwargs, plugin_kwargs, chatbot, history, system_prompt, user_request):
     history = []    # 清空历史，以免输入溢出
     import glob, os
     if os.path.exists(txt):

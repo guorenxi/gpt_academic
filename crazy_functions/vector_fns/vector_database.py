@@ -1,16 +1,17 @@
 # From project chatglm-langchain
 
-import threading
-from toolbox import Singleton
 import os
-import shutil
 import os
 import uuid
 import tqdm
+import shutil
+import threading
+import numpy as np
+from toolbox import Singleton
+from loguru import logger
 from langchain.vectorstores import FAISS
 from langchain.docstore.document import Document
 from typing import List, Tuple
-import numpy as np
 from crazy_functions.vector_fns.general_file_loader import load_file
 
 embedding_model_dict = {
@@ -28,7 +29,7 @@ EMBEDDING_DEVICE = "cpu"
 
 # 基于上下文的prompt模版，请务必保留"{question}"和"{context}"
 PROMPT_TEMPLATE = """已知信息：
-{context} 
+{context}
 
 根据上述已知信息，简洁和专业的来回答用户的问题。如果无法从中得到答案，请说 “根据已知信息无法回答该问题” 或 “没有提供足够的相关信息”，不允许在答案中添加编造成分，答案请使用中文。 问题是：{question}"""
 
@@ -58,7 +59,7 @@ OPEN_CROSS_DOMAIN = False
 def similarity_search_with_score_by_vector(
         self, embedding: List[float], k: int = 4
 ) -> List[Tuple[Document, float]]:
-    
+
     def seperate_list(ls: List[int]) -> List[List[int]]:
         lists = []
         ls1 = [ls[0]]
@@ -150,17 +151,17 @@ class LocalDocQA:
         failed_files = []
         if isinstance(filepath, str):
             if not os.path.exists(filepath):
-                print("路径不存在")
+                logger.error("路径不存在")
                 return None
             elif os.path.isfile(filepath):
                 file = os.path.split(filepath)[-1]
                 try:
                     docs = load_file(filepath, SENTENCE_SIZE)
-                    print(f"{file} 已成功加载")
+                    logger.info(f"{file} 已成功加载")
                     loaded_files.append(filepath)
                 except Exception as e:
-                    print(e)
-                    print(f"{file} 未能成功加载")
+                    logger.error(e)
+                    logger.error(f"{file} 未能成功加载")
                     return None
             elif os.path.isdir(filepath):
                 docs = []
@@ -170,23 +171,23 @@ class LocalDocQA:
                         docs += load_file(fullfilepath, SENTENCE_SIZE)
                         loaded_files.append(fullfilepath)
                     except Exception as e:
-                        print(e)
+                        logger.error(e)
                         failed_files.append(file)
 
                 if len(failed_files) > 0:
-                    print("以下文件未能成功加载：")
+                    logger.error("以下文件未能成功加载：")
                     for file in failed_files:
-                        print(f"{file}\n")
+                        logger.error(f"{file}\n")
 
         else:
             docs = []
             for file in filepath:
                 docs += load_file(file, SENTENCE_SIZE)
-                print(f"{file} 已成功加载")
+                logger.info(f"{file} 已成功加载")
                 loaded_files.append(file)
 
         if len(docs) > 0:
-            print("文件加载完毕，正在生成向量库")
+            logger.info("文件加载完毕，正在生成向量库")
             if vs_path and os.path.isdir(vs_path):
                 try:
                     self.vector_store = FAISS.load_local(vs_path, text2vec)
@@ -200,7 +201,7 @@ class LocalDocQA:
             return vs_path, loaded_files
         else:
             raise RuntimeError("文件加载失败，请检查文件格式是否正确")
-        
+
     def get_loaded_file(self, vs_path):
         ds = self.vector_store.docstore
         return set([ds._dict[k].metadata['source'].split(vs_path)[-1] for k in ds._dict])
@@ -233,7 +234,7 @@ class LocalDocQA:
         prompt += "\n\n".join([f"({k}): " + doc.page_content for k, doc in enumerate(related_docs_with_score)])
         prompt += "\n\n---\n\n"
         prompt = prompt.encode('utf-8', 'ignore').decode()   # avoid reading non-utf8 chars
-        # print(prompt)
+        # logger.info(prompt)
         response = {"query": query, "source_documents": related_docs_with_score}
         return response, prompt
 
@@ -262,7 +263,7 @@ def construct_vector_store(vs_id, vs_path, files, sentence_size, history, one_co
     else:
         pass
         # file_status = "文件未成功加载，请重新上传文件"
-    # print(file_status)
+    # logger.info(file_status)
     return local_doc_qa, vs_path
 
 @Singleton
@@ -278,7 +279,7 @@ class knowledge_archive_interface():
         if self.text2vec_large_chinese is None:
             # < -------------------预热文本向量化模组--------------- >
             from toolbox import ProxyNetworkActivate
-            print('Checking Text2vec ...')
+            logger.info('Checking Text2vec ...')
             from langchain.embeddings.huggingface import HuggingFaceEmbeddings
             with ProxyNetworkActivate('Download_LLM'):    # 临时地激活代理网络
                 self.text2vec_large_chinese = HuggingFaceEmbeddings(model_name="GanymedeNil/text2vec-large-chinese")
@@ -290,10 +291,10 @@ class knowledge_archive_interface():
         self.threadLock.acquire()
         # import uuid
         self.current_id = id
-        self.qa_handle, self.kai_path = construct_vector_store(   
-            vs_id=self.current_id, 
+        self.qa_handle, self.kai_path = construct_vector_store(
+            vs_id=self.current_id,
             vs_path=vs_path,
-            files=file_manifest, 
+            files=file_manifest,
             sentence_size=100,
             history=[],
             one_conent="",
@@ -304,7 +305,7 @@ class knowledge_archive_interface():
 
     def get_current_archive_id(self):
         return self.current_id
-    
+
     def get_loaded_file(self, vs_path):
         return self.qa_handle.get_loaded_file(vs_path)
 
@@ -312,10 +313,10 @@ class knowledge_archive_interface():
         self.threadLock.acquire()
         if not self.current_id == id:
             self.current_id = id
-            self.qa_handle, self.kai_path = construct_vector_store(   
-                vs_id=self.current_id, 
+            self.qa_handle, self.kai_path = construct_vector_store(
+                vs_id=self.current_id,
                 vs_path=vs_path,
-                files=[], 
+                files=[],
                 sentence_size=100,
                 history=[],
                 one_conent="",
@@ -329,7 +330,7 @@ class knowledge_archive_interface():
             query = txt,
             vs_path = self.kai_path,
             score_threshold=VECTOR_SEARCH_SCORE_THRESHOLD,
-            vector_search_top_k=VECTOR_SEARCH_TOP_K, 
+            vector_search_top_k=VECTOR_SEARCH_TOP_K,
             chunk_conent=True,
             chunk_size=CHUNK_SIZE,
             text2vec = self.get_chinese_text2vec(),

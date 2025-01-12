@@ -1,12 +1,13 @@
 model_name = "deepseek-coder-6.7b-instruct"
 cmd_to_install = "未知" # "`pip install -r request_llms/requirements_qwen.txt`"
 
-import os
 from toolbox import ProxyNetworkActivate
 from toolbox import get_conf
-from .local_llm_class import LocalLLMHandle, get_local_llm_predict_fns
+from request_llms.local_llm_class import LocalLLMHandle, get_local_llm_predict_fns
 from threading import Thread
+from loguru import logger
 import torch
+import os
 
 def download_huggingface_model(model_name, max_retry, local_dir):
     from huggingface_hub import snapshot_download
@@ -15,7 +16,7 @@ def download_huggingface_model(model_name, max_retry, local_dir):
             snapshot_download(repo_id=model_name, local_dir=local_dir, resume_download=True)
             break
         except Exception as e:
-            print(f'\n\n下载失败，重试第{i}次中...\n\n')
+            logger.error(f'\n\n下载失败，重试第{i}次中...\n\n')
     return local_dir
 # ------------------------------------------------------------------------------------------------------------------------
 # 🔌💻 Local Model
@@ -88,7 +89,7 @@ class GetCoderLMHandle(LocalLLMHandle):
             temperature = kwargs['temperature']
             history = kwargs['history']
             return query, max_length, top_p, temperature, history
-        
+
         query, max_length, top_p, temperature, history = adaptor(kwargs)
         history.append({ 'role': 'user', 'content': query})
         messages = history
@@ -97,14 +98,14 @@ class GetCoderLMHandle(LocalLLMHandle):
             inputs = inputs[:, -max_length:]
         inputs = inputs.to(self._model.device)
         generation_kwargs = dict(
-                                    inputs=inputs, 
+                                    inputs=inputs,
                                     max_new_tokens=max_length,
                                     do_sample=False,
                                     top_p=top_p,
                                     streamer = self._streamer,
                                     top_k=50,
                                     temperature=temperature,
-                                    num_return_sequences=1, 
+                                    num_return_sequences=1,
                                     eos_token_id=32021,
                                 )
         thread = Thread(target=self._model.generate, kwargs=generation_kwargs, daemon=True)
@@ -112,7 +113,6 @@ class GetCoderLMHandle(LocalLLMHandle):
         generated_text = ""
         for new_text in self._streamer:
             generated_text += new_text
-            # print(generated_text)
             yield generated_text
 
 

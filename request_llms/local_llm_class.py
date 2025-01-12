@@ -1,9 +1,11 @@
 import time
 import threading
 from toolbox import update_ui, Singleton
+from toolbox import ChatBotWithCookies
 from multiprocessing import Process, Pipe
 from contextlib import redirect_stdout
 from request_llms.queued_pipe import create_queue_pipe
+from loguru import logger
 
 class ThreadLock(object):
     def __init__(self):
@@ -50,7 +52,7 @@ def reset_tqdm_output():
             getattr(sys.stdout, 'flush', lambda: None)()
 
         def fp_write(s):
-            print(s)
+            logger.info(s)
         last_len = [0]
 
         def print_status(s):
@@ -90,7 +92,7 @@ class LocalLLMHandle(Process):
         return self.state
 
     def set_state(self, new_state):
-        # ⭐run in main process or 🏃‍♂️🏃‍♂️🏃‍♂️ run in child process 
+        # ⭐run in main process or 🏃‍♂️🏃‍♂️🏃‍♂️ run in child process
         if self.is_main_process:
             self.state = new_state
         else:
@@ -178,16 +180,16 @@ class LocalLLMHandle(Process):
                     r = self.parent.recv()
                     continue
             break
-        return 
-    
+        return
+
     def stream_chat(self, **kwargs):
         # ⭐run in main process
         if self.get_state() == "`准备就绪`":
-            yield "`正在等待线程锁，排队中请稍后 ...`"
+            yield "`正在等待线程锁，排队中请稍候 ...`"
 
         with self.threadLock:
             if self.parent.poll():
-                yield "`排队中请稍后 ...`"
+                yield "`排队中请稍候 ...`"
                 self.clear_pending_messages()
             self.parent.send(kwargs)
             std_out = ""
@@ -198,7 +200,7 @@ class LocalLLMHandle(Process):
                 if res.startswith(self.std_tag):
                     new_output = res[len(self.std_tag):]
                     std_out = std_out[:std_out_clip_len]
-                    print(new_output, end='')
+                    logger.info(new_output, end='')
                     std_out = new_output + std_out
                     yield self.std_tag + '\n```\n' + std_out + '\n```\n'
                 elif res == '[Finish]':
@@ -214,7 +216,7 @@ class LocalLLMHandle(Process):
 def get_local_llm_predict_fns(LLMSingletonClass, model_name, history_format='classic'):
     load_message = f"{model_name}尚未加载，加载需要一段时间。注意，取决于`config.py`的配置，{model_name}消耗大量的内存（CPU）或显存（GPU），也许会导致低配计算机卡死 ……"
 
-    def predict_no_ui_long_connection(inputs, llm_kwargs, history=[], sys_prompt="", observe_window=[], console_slience=False):
+    def predict_no_ui_long_connection(inputs:str, llm_kwargs:dict, history:list=[], sys_prompt:str="", observe_window:list=[], console_slience:bool=False):
         """
             refer to request_llms/bridge_all.py
         """
@@ -260,7 +262,8 @@ def get_local_llm_predict_fns(LLMSingletonClass, model_name, history_format='cla
                     raise RuntimeError("程序终止。")
         return response
 
-    def predict(inputs, llm_kwargs, plugin_kwargs, chatbot, history=[], system_prompt='', stream=True, additional_fn=None):
+    def predict(inputs:str, llm_kwargs:dict, plugin_kwargs:dict, chatbot:ChatBotWithCookies,
+                history:list=[], system_prompt:str='', stream:bool=True, additional_fn:str=None):
         """
             refer to request_llms/bridge_all.py
         """
